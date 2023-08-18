@@ -4,6 +4,7 @@
 #include <random.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdint.h>
 #include "threads/flags.h"
 #include "threads/interrupt.h"
 #include "threads/intr-stubs.h"
@@ -27,6 +28,7 @@
 /* List of processes in THREAD_READY state, that is, processes
    that are ready to run but not actually running. */
 static struct list ready_list;
+static struct list sleep_list;
 
 /* Idle thread. */
 static struct thread *idle_thread;
@@ -53,6 +55,9 @@ static unsigned thread_ticks;   /* # of timer ticks since last yield. */
    If true, use multi-level feedback queue scheduler.
    Controlled by kernel command-line option "-o mlfqs". */
 bool thread_mlfqs;
+
+int64_t wake_time;
+
 
 static void kernel_thread (thread_func *, void *aux);
 
@@ -108,13 +113,17 @@ thread_init (void) {
 	/* Init the globla thread context */
 	lock_init (&tid_lock);
 	list_init (&ready_list);
+	list_init (&sleep_list);
 	list_init (&destruction_req);
+
+	wake_time = INT64_MAX;
 
 	/* Set up a thread structure for the running thread. */
 	initial_thread = running_thread ();
 	init_thread (initial_thread, "main", PRI_DEFAULT);
 	initial_thread->status = THREAD_RUNNING;
 	initial_thread->tid = allocate_tid ();
+	initial_thread->wake_time = 0;
 }
 
 /* Starts preemptive thread scheduling by enabling interrupts.
@@ -192,6 +201,7 @@ thread_create (const char *name, int priority,
 	/* Initialize thread. */
 	init_thread (t, name, priority);
 	tid = t->tid = allocate_tid ();
+	t->wake_time = INT64_MAX;
 
 	/* Call the kernel_thread if it scheduled.
 	 * Note) rdi is 1st argument, and rsi is 2nd argument. */
@@ -588,3 +598,53 @@ allocate_tid (void) {
 
 	return tid;
 }
+
+bool time_compare (const struct list_elem *a, const struct list_elem *b, void *aux){
+	struct thread *a_thread = list_entry(a, struct thread, elem);
+	struct thread *b_thread = list_entry(b, struct thread, elem);
+
+	if(a_thread->wake_time<b_thread->wake_time){
+		return true;
+	}
+	else{
+		return false;
+	}
+}
+
+void thread_sleep(int64_t time){
+	struct thread* t = thread_current();
+	t->wake_time = time;
+	list_insert_ordered(&sleep_list,&t->elem,&time_compare,NULL);
+	struct list_elem* first = list_front(&sleep_list);
+	int64_t new_wake_time = list_entry(first, struct thread, elem)->wake_time;
+	wake_time = new_wake_time;
+	
+	thread_block();
+}
+
+void thread_wake(){
+	int64_t now = timer_ticks();
+	enum intr_level old_level = intr_disable();
+
+	if(now>=wake_time){
+		while(list_empty(&sleep_list)==false){
+			struct list_elem* first = list_front(&sleep_list);
+			struct thread* first_thread = list_entry(first,struct thread,elem);
+			if(first_thread->wake_time<=now){
+				list_remove(first);
+				thread_unblock(first_thread);
+				if(list_empty(&sleep_list)==false){
+					wake_time = list_entry(list_front(&sleep_list),struct thread,elem)->wake_time;
+				}
+				else{
+					wake_time = INT64_MAX;
+				}
+			}
+			else{
+				break;
+			}
+		}
+	}
+	intr_set_level(old_level);
+}
+
