@@ -92,8 +92,23 @@ struct thread {
 	char name[16];                      /* Name (for debugging purposes). */
 	int priority;                       /* Priority. */
 
+	int nice;
+	int recent_cpu;
+
+	int64_t wake_time;					/* Wake up time in thread sleep. */
+
+	int old_priority;
+	struct lock *wait_lock;
+	struct list *wait_list;
+	struct list donator_list;
+	bool donated;
+
+	struct list_elem donator_elem;
+	
+
 	/* Shared between thread.c and synch.c. */
 	struct list_elem elem;              /* List element. */
+	struct list_elem all_elem;
 
 #ifdef USERPROG
 	/* Owned by userprog/process.c. */
@@ -142,5 +157,13 @@ int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
 
 void do_iret (struct intr_frame *tf);
+
+
+bool priority_compare (const struct list_elem *a, const struct list_elem *b, void* aux);
+void thread_sort();
+void recent_cpu_update();
+void load_avg_update();
+void priority_update();
+void thread_try_yield();
 
 #endif /* threads/thread.h */

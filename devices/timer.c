@@ -90,11 +90,16 @@ timer_elapsed (int64_t then) {
 /* Suspends execution for approximately TICKS timer ticks. */
 void
 timer_sleep (int64_t ticks) {
+	enum intr_level old_level;
 	int64_t start = timer_ticks ();
 
 	ASSERT (intr_get_level () == INTR_ON);
-	while (timer_elapsed (start) < ticks)
-		thread_yield ();
+	if (timer_elapsed (start) < ticks){
+		old_level = intr_disable();
+		thread_sleep(start+ticks);
+		intr_set_level(old_level);
+	}
+
 }
 
 /* Suspends execution for approximately MS milliseconds. */
@@ -126,6 +131,18 @@ static void
 timer_interrupt (struct intr_frame *args UNUSED) {
 	ticks++;
 	thread_tick ();
+	thread_wake();
+
+	if(thread_mlfqs==true){
+		recent_cpu_inc();
+		if(ticks%TIMER_FREQ==0){
+			load_avg_update();
+			recent_cpu_update();
+		}
+		if(ticks%4==0){
+			priority_update();
+		}
+	}
 }
 
 /* Returns true if LOOPS iterations waits for more than one timer
@@ -184,3 +201,4 @@ real_time_sleep (int64_t num, int32_t denom) {
 		busy_wait (loops_per_tick * num / 1000 * TIMER_FREQ / (denom / 1000));
 	}
 }
+
